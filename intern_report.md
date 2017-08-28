@@ -9,7 +9,7 @@
 - 起源
 - 需求分析
 - 开发选型
-- 环境约束与相应解决
+- 约束与对应措施
 - 开发流程简述
 - 性能测试
 - 展望
@@ -20,29 +20,36 @@
 ### 起源
 - CDN 节点需要一个外部探测工具查看网络情况(like [17ce](www.17ce.com))
 - DNS 需要一个外部探测工具
+Note: DNS 探测是要取得什么数据?
 
 
 
 ### 需求分析与开发选型
-- QA 购买的外部机房资源不便直接开放给所有人运行定制任务
-- 边缘节点的计算资源需要复用(包括自建CDN的资源，UU的资源等等)
-  - 现有方案: Serveless Computing x BaaS: Amazon lambda
+- QA 购买的外部机房资源不便完全开放来运行定制任务
+- 边缘节点的计算资源需要复用(自建CDN的资源，UU的资源, etc.)
+  - 可参考方案: [Amazon Lambda@Edge](http://www.infoq.com/cn/news/2017/07/aws-lambda-at-edge)
 
-- 开发与线上部署: Dockerized
-Note: 统一依赖, 资源隔离
+- 开发与线上部署: Dockerized.
+
+Note: 会在靠近最终用户的AWS站点上自动运行和伸缩代码，实现高可用性 Docker 化开发原因: 统一依赖, 资源隔离
+
+
+
 
 - 容器集群管理与调度: Docker Swarm
   - Docker Swarm Mode: Out of the box
-  - 资源限制 + 服务升级 + 横向扩展
+  - 资源限制 + 服务平滑升级 + 负载均衡
+Note: swarm mode 开箱即用, 方便部署, 横向扩展, 添加节点, swarm join
 
 
 
 - WebApp framework: flask; UI: vue.js
   - 前后端完全分离, 可分开部署
-  - 用户可以使用自己开发的 UI, 直接调用相关 API 即可
+  - 用户可使用自定义 UI, 直接调用相关 API 即可
 - DB: MySQL + Mongo
-- MQ: RabbitMQ + celery
+- 消息队列: RabbitMQ + celery
 - 容器编排: Docker-Compose
+Note: MySQL: Cluster + Job + Instance 配置, Mongo 储存结果和输出
 
 
 
@@ -67,7 +74,7 @@ Note: 统一依赖, 资源隔离
 - 备选方案:
   - 启动容器时指定使用 host network, 让容器具有跟宿主机一样的网络环境
     - 直接和宿主机共享同一个 Network Namespace
-    - 对主机网络有完全访问权, 危险!
+    - 对主机网络有完全访问权
     - 不同容器之间使用相同端口会产生冲突
 
 
@@ -135,19 +142,20 @@ Locust Chart:
 - Failure Rate:
   - 同时在线用户超过 150 个时, 错误率超过 1%
   - Connection reset by peer
-- 单点DB查询压力较大, 响应时间基本和 QPS 成正比
+- 原因分析: 单点DB查询压力较大, 响应时间基本和 QPS 成正比
 
 
 
 ### 展望
 - 服务的资源限制优化:
-  - Now: CPU + mem: limit only(运行时资源阈值)
-  - Planned:
-    - 增加 reserve(运行前资源需求下限检查)
+  - Now: CPU + mem: limit(运行时资源阈值)
+  - Planning:
+    - 增加 reserve 检查(运行前资源需求下限检查)
     - 增加更多限制维度: net bandwidth, disk io params, etc.
+    - 获取节点的基础配置和资源使用情况: Galaxy + Gpostd
 
 - 服务创建的自动化流程打通:
-  - 自动创建代码与 Docker 仓库, 更加方便用户定制
+  - 自动创建代码与 Docker 仓库, 更加方便用户定制并创建服务
 
 - 监听未完成任务的速度优化
 
