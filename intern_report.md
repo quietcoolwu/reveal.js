@@ -11,6 +11,7 @@
 - 开发选型
 - 约束与对应措施
 - 开发流程简述
+- Demo
 - 性能测试
 - 展望
 - Q & A
@@ -18,44 +19,44 @@
 
 
 ### 起源
-- CDN 节点需要一个外部探测工具查看网络情况(like [17ce](www.17ce.com))
-- DNS 需要一个外部探测工具
-Note: DNS 探测是要取得什么数据?
+- CDN 节点需要一个外部探测工具查看网络情况(like [17ce](http://www.17ce.com))
+- DNS 需要一个外部探测工具(解析时间, 劫持检查等)
 
 
 
 ### 需求分析与开发选型
-- QA 购买的外部机房资源不便完全开放来运行定制任务
+- QA 购买的外部机房资源不便完全开放运行定制任务
 - 边缘节点的计算资源需要复用(自建CDN的资源，UU的资源, etc.)
   - 可参考方案: [Amazon Lambda@Edge](http://www.infoq.com/cn/news/2017/07/aws-lambda-at-edge)
 
-- 开发与线上部署: Dockerized.
+- 开发与线上部署: Dockerized
 
-Note: 会在靠近最终用户的AWS站点上自动运行和伸缩代码，实现高可用性 Docker 化开发原因: 统一依赖, 资源隔离
+Note: 会在靠近最终用户的AWS站点上自动运行和伸缩服务，实现高可用性, 由 cloudfront 事件触发; Docker 化开发原因: 统一依赖, 资源隔离
 
 
 
 
 - 容器集群管理与调度: Docker Swarm
   - Docker Swarm Mode: Out of the box
-  - 资源限制 + 服务平滑升级 + 负载均衡
-Note: swarm mode 开箱即用, 方便部署, 横向扩展, 添加节点, swarm join
+  - 资源限制 + 服务升级与伸缩 + 负载均衡
+Note: swarm mode 开箱即用, 方便部署, 横向扩展, 添加节点使用 swarm join 就好
 
 
 
 - WebApp framework: flask; UI: vue.js
   - 前后端完全分离, 可分开部署
-  - 用户可使用自定义 UI, 直接调用相关 API 即可
-- DB: MySQL + Mongo
-- 消息队列: RabbitMQ + celery
+  - 用户可开发自定义 UI, 直接调用相关 API 即可
+- DB: MySQL + MongoDB
+- 消息队列: RabbitMQ + Celery
 - 容器编排: Docker-Compose
-Note: MySQL: Cluster + Job + Instance 配置, Mongo 储存结果和输出
+Note: MySQL存储集群 + 任务 + 实例配置, Mongo 储存结果和输出
 
 
 
 ### 系统设计图示
 ![edge_user_chart](img/edge_user_chart.png)
 <!-- .element height="100%" width="100%" -->
+Note: 用户如何选择运行节点, 多次重复执行功能, 每轮聚合一次, 数据管道, 将数据打到其他地方
 
 
 
@@ -73,9 +74,11 @@ Note: MySQL: Cluster + Job + Instance 配置, Mongo 储存结果和输出
 - 多线机房, 需要将服务创建后使用的网络和实际运行线路关联
 - 备选方案:
   - 启动容器时指定使用 host network, 让容器具有跟宿主机一样的网络环境
-    - 直接和宿主机共享同一个 Network Namespace
+    - 跳过 libnetwork, 直接和宿主机共享同一个 network namespace
     - 对主机网络有完全访问权
-    - 不同容器之间使用相同端口会产生冲突
+    - 不同容器之间, 容器宿主机之间, 会产生资源竞争和冲突
+Note: veth pair, 一端放在新的 namespace, 另一端放在宿主机的 namespace 连接物理网络设备
+
 
 
 
@@ -84,6 +87,28 @@ Note: MySQL: Cluster + Job + Instance 配置, Mongo 储存结果和输出
   - 依然是 bridge network, 相对安全
   - 配合策略路由在 rt_tables 添加路由表即可, 比较简单
 - 最终选择: Bridge Network + 策略路由
+
+
+
+#### 配置示例:
+``` shell
+# 创建 scope 为 swarm 的 bridge network
+docker network create --config-only --subnet 192.168.50.0/24 \
+--gateway 192.168.50.1 tel_net_50
+docker network create -d bridge --scope swarm \
+--config-from tel_net_50 edge_tel
+
+# 添加路由表
+vim /etc/iproute2/rt_tables
+# Add
+150 docker_tel
+
+# 为路由表添加规则
+ip route add via 219.135.99.193 dev eth2 table 150
+# 对于来自此子网的数据使用 150 路由表的规则
+ip rule add from 192.168.50.0/24 table 150
+```
+
 
 
 
@@ -97,9 +122,9 @@ Note: MySQL: Cluster + Job + Instance 配置, Mongo 储存结果和输出
 
 
 - Now: 基于 MQ 的服务创建与实例执行
-  - 一个服务对应一个 queue
-  - 服务一次性创建, 启动后只监听 queue, 服务数与任务无关
-  - 灵活添加新服务或更改原服务
+  - 一个服务对应一个队列
+  - 服务一次性创建, 启动后只监听相应队列, 在线服务数与任务多少无关
+  - 灵活添加新服务或升级原服务
   - celery 设置多任务并发
   - service 副本数可调
   - speed boosted!
@@ -110,18 +135,16 @@ Note: MySQL: Cluster + Job + Instance 配置, Mongo 储存结果和输出
 
 
 
-#### 性能测试 Part1: 响应时间测试
+#### 性能测试: 响应时间测试
 - 机器资源: staging server x 3
   - Xeon Intel Xeon E312xx, 2.4 GHz x 2; 4G RAM
 
 - 主服务: WebApp + Rabbitmq + MySQL
   - gunicorn + gevent: worker * 5
 
-
-
-- 响应时间测试
   - 300 users in 30s
   - min_wait: 1000ms; max_wait: 5000ms
+
 
 
 
@@ -141,8 +164,8 @@ Locust Chart:
 
 - Failure Rate:
   - 同时在线用户超过 150 个时, 错误率超过 1%
-  - Connection reset by peer
-- 原因分析: 单点DB查询压力较大, 响应时间基本和 QPS 成正比
+  - Connection reset by peer为主
+- 可能原因分析: 单点 DB 频繁查询压力较大, 响应时间基本和 QPS 成正比
 
 
 
@@ -152,7 +175,9 @@ Locust Chart:
   - Planning:
     - 增加 reserve 检查(运行前资源需求下限检查)
     - 增加更多限制维度: net bandwidth, disk io params, etc.
-    - 获取节点的基础配置和资源使用情况: Galaxy + Gpostd
+    - 获取节点的硬件配置(资产信息)和资源使用情况: Galaxy + Gpostd
+
+
 
 - 服务创建的自动化流程打通:
   - 自动创建代码与 Docker 仓库, 更加方便用户定制并创建服务
@@ -162,3 +187,4 @@ Locust Chart:
 
 
 ### Q & A
+Note: 轮询优化, celery_beat_schedule 导致间隔时间无法灵活根据任务要求调整;
